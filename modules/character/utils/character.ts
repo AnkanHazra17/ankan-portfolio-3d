@@ -82,7 +82,7 @@ const normalizeCharacterMaterial = (mesh: THREE.Mesh, material: THREE.Material):
     emissiveIntensity: 0,
     envMapIntensity: materialSettings.envMapIntensity,
     metalness: materialSettings.metalness,
-    name: `${material.name || mesh.name || "character"}-${materialRole}`,
+    name: material.name || mesh.name || "character",
     roughness: materialSettings.roughness,
     side: material.side,
     toneMapped: material.toneMapped,
@@ -110,24 +110,37 @@ const setCharacter = (
         (gltf) => {
           try {
             const character = gltf.scene;
+
+            // The desk/monitor lives under the "Plane004" node. Its materials must stay
+            // original (transparency-capable) so the scroll timeline can keep it hidden
+            // until the what-I-do reveal — normalizing them would make the desk an opaque
+            // white object overlapping the character. Collect the subtree to skip it.
+            const deskRoot = character.getObjectByName("Plane004");
+            const preservedMeshIds = new Set<number>();
+            deskRoot?.traverse((object) => preservedMeshIds.add(object.id));
+
             character.traverse((child) => {
               const mesh = child as THREE.Mesh;
               if (mesh.isMesh) {
                 mesh.castShadow = false;
                 mesh.receiveShadow = false;
                 mesh.frustumCulled = true;
+                const preserveMaterials =
+                  preservedMeshNames.has(mesh.name) || preservedMeshIds.has(mesh.id);
                 const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
                 const normalizedMaterials = materials.map((material) => {
-                  const normalizedMaterial = normalizeCharacterMaterial(mesh, material);
-                  (normalizedMaterial as THREE.ShaderMaterial).precision = "mediump";
-                  return normalizedMaterial;
+                  const nextMaterial = preserveMaterials
+                    ? material
+                    : normalizeCharacterMaterial(mesh, material);
+                  (nextMaterial as THREE.ShaderMaterial).precision = "mediump";
+                  return nextMaterial;
                 });
                 mesh.material = Array.isArray(mesh.material) ? normalizedMaterials : normalizedMaterials[0];
               }
             });
             renderer.compile(character, camera, scene);
-            const footR = character.getObjectByName("footR");
-            const footL = character.getObjectByName("footL");
+            const footR = character.getObjectByName("foot.R") ?? character.getObjectByName("footR");
+            const footL = character.getObjectByName("foot.L") ?? character.getObjectByName("footL");
             if (footR) footR.position.y = 3.36;
             if (footL) footL.position.y = 3.36;
             resolve(gltf);

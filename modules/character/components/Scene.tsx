@@ -92,7 +92,7 @@ const Scene = () => {
           setChar(loadedCharacter);
           scene.add(loadedCharacter);
           setCharTimeline(loadedCharacter, camera);
-          headBone = loadedCharacter.getObjectByName("spine006") || null;
+          headBone = loadedCharacter.getObjectByName("spine.006") ?? loadedCharacter.getObjectByName("spine006") ?? null;
           screenLight = (loadedCharacter.getObjectByName("screenlight") as THREE.Mesh & { material: THREE.MeshStandardMaterial }) || null;
           progress.loaded().then(() => {
             if (isDisposed) return;

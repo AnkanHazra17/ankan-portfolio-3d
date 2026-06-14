@@ -15,8 +15,68 @@ const characterTriggerIds = [
 ] as const;
 const careerTriggerId = "career";
 
+type MeshStandardMaterialWithProps = THREE.MeshStandardMaterial & {
+  name?: string;
+  transparent?: boolean;
+  opacity?: number;
+  emissive?: THREE.Color;
+  emissiveIntensity?: number;
+  color?: THREE.Color;
+};
+
 const killTriggers = (ids: readonly string[]) => {
   ids.forEach((id) => ScrollTrigger.getById(id)?.kill());
+};
+
+const getObjectByNames = (root: THREE.Object3D | null, names: string[]) => {
+  if (!root) return null;
+
+  for (const name of names) {
+    const object = root.getObjectByName(name);
+    if (object) return object;
+  }
+
+  return null;
+};
+
+const getMeshMaterials = (mesh: THREE.Mesh): MeshStandardMaterialWithProps[] => {
+  const materials = mesh.material;
+  return (Array.isArray(materials) ? materials : [materials]) as MeshStandardMaterialWithProps[];
+};
+
+const materialMatchesName = (material: THREE.Material, targetName: string) =>
+  material.name === targetName || material.name.startsWith(`${targetName}-`);
+
+const setMaterialOpacity = (material: MeshStandardMaterialWithProps, opacity: number) => {
+  material.transparent = true;
+  material.opacity = opacity;
+};
+
+// `Plane004` is the desk/monitor node (a group whose children carry the screen materials).
+// Hide every material in the subtree so the desk/monitor starts fully invisible and never
+// overlaps the character before the what-I-do reveal, and return the mesh holding
+// `Material.027` (the screen we slide into place during tl2).
+const collectMonitorMesh = (
+  root: THREE.Object3D,
+  monitorMaterials: MeshStandardMaterialWithProps[]
+): THREE.Mesh | null => {
+  let monitor: THREE.Mesh | null = null;
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    getMeshMaterials(mesh).forEach((material) => {
+      setMaterialOpacity(material, 0);
+      if (materialMatchesName(material, "Material.027")) {
+        monitor = mesh;
+        material.color.set(warmMonitorColor);
+        monitorMaterials.push(material);
+      }
+      if (materialMatchesName(material, "Material.028")) {
+        monitorMaterials.push(material);
+      }
+    });
+  });
+  return monitor;
 };
 
 let intensityInterval: ReturnType<typeof setInterval> | null = null;
@@ -66,35 +126,27 @@ export function setCharTimeline(
 
   let screenLight: THREE.Mesh | null = null;
   let monitor: THREE.Mesh | null = null;
+  const monitorMaterials: MeshStandardMaterialWithProps[] = [];
 
-  character?.children.forEach((object: THREE.Object3D) => {
-    const obj = object as THREE.Mesh & { material?: THREE.MeshStandardMaterial & { name?: string; transparent?: boolean; opacity?: number; emissive?: THREE.Color; emissiveIntensity?: number; color?: THREE.Color } };
-    if (obj.name === "Plane004") {
-      obj.children.forEach((child: THREE.Object3D) => {
-        const c = child as THREE.Mesh & { material: THREE.MeshStandardMaterial & { name?: string; transparent?: boolean; opacity?: number; color?: THREE.Color } };
-        c.material.transparent = true;
-        c.material.opacity = 0;
-        if (c.material.name === "Material.027") {
-          monitor = c as unknown as THREE.Mesh;
-          c.material.color.set(warmMonitorColor);
-        }
-      });
-    }
-    if (obj.name === "screenlight") {
-      const sl = obj as THREE.Mesh & { material: THREE.MeshStandardMaterial & { transparent?: boolean; opacity?: number; emissive: THREE.Color; emissiveIntensity?: number } };
-      sl.material.transparent = true;
-      sl.material.opacity = 0;
-      sl.material.emissive.set(warmScreenLight);
-      gsap.timeline({ repeat: -1, repeatRefresh: true }).to(sl.material, {
-        emissiveIntensity: () => intensity * 2.5,
-        duration: () => Math.random() * 0.6,
-        delay: () => Math.random() * 0.1,
-      });
-      screenLight = sl as unknown as THREE.Mesh;
-    }
-  });
+  const monitorRoot = getObjectByNames(character, ["Plane.004", "Plane004"]);
+  if (monitorRoot) {
+    monitor = collectMonitorMesh(monitorRoot, monitorMaterials);
+  }
 
-  const neckBone = character?.getObjectByName("spine005");
+  const screenLightMesh = getObjectByNames(character, ["screenlight"]) as THREE.Mesh | null;
+  if (screenLightMesh?.isMesh) {
+    const screenLightMaterial = screenLightMesh.material as MeshStandardMaterialWithProps;
+    setMaterialOpacity(screenLightMaterial, 0);
+    screenLightMaterial.emissive.set(warmScreenLight);
+    gsap.timeline({ repeat: -1, repeatRefresh: true }).to(screenLightMaterial, {
+      emissiveIntensity: () => intensity * 2.5,
+      duration: () => Math.random() * 0.6,
+      delay: () => Math.random() * 0.1,
+    });
+    screenLight = screenLightMesh;
+  }
+
+  const neckBone = getObjectByNames(character, ["spine.005", "spine005"]);
 
   if (window.innerWidth > 1024) {
     if (character) {
@@ -114,11 +166,19 @@ export function setCharTimeline(
           .fromTo(".character-model", { pointerEvents: "inherit" }, { pointerEvents: "none", x: "-12%", delay: 2, duration: 5 }, 0)
           .to(character.rotation, { y: 0.92, x: 0.12, delay: 3, duration: 3 }, 0)
           .to(neckBone.rotation, { x: 0.6, delay: 2, duration: 3 }, 0)
-          .to((monitor as THREE.Mesh & { material: THREE.MeshStandardMaterial }).material, { opacity: 1, duration: 0.8, delay: 3.2 }, 0)
-          .to((screenLight as THREE.Mesh & { material: THREE.MeshStandardMaterial }).material, { opacity: 1, duration: 0.8, delay: 4.5 }, 0)
-          .fromTo(".what-box-in", { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.2, delay: 6 }, 0)
-          .fromTo((monitor as THREE.Mesh).position, { y: -10, z: 2 }, { y: 0, z: 0, delay: 1.5, duration: 3 }, 0)
+          .fromTo(".what-box-in", { display: "none" }, { display: "flex", duration: 0.1, delay: 6 }, 0)
+          .fromTo(monitor.position, { y: -10, z: 2 }, { y: 0, z: 0, delay: 1.5, duration: 3 }, 0)
           .fromTo(".character-rim", { opacity: 1, scaleX: 1.4 }, { opacity: 0, scale: 0, y: "-70%", duration: 5, delay: 2 }, 0.3);
+
+        monitorMaterials.forEach((material) => {
+          tl2.to(material, { opacity: 1, duration: 0.8, delay: 3.2 }, 0);
+        });
+
+        tl2.to((screenLight as THREE.Mesh & { material: THREE.MeshStandardMaterial }).material, {
+          opacity: 1,
+          duration: 0.8,
+          delay: 4.5,
+        }, 0);
       }
 
       tl3
@@ -136,7 +196,7 @@ export function setCharTimeline(
           end: "bottom top",
         },
       });
-      tM2.to(".what-box-in", { autoAlpha: 1, duration: 0.1, delay: 0 }, 0);
+      tM2.to(".what-box-in", { display: "flex", duration: 0.1, delay: 0 }, 0);
     }
   }
 
