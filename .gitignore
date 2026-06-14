@@ -16,6 +16,12 @@
 # next.js
 /.next/
 /out/
+/.claude
+/.cursor
+/.gemini
+/.impeccable
+/context
+
 
 # production
 /build
